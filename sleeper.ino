@@ -1,3 +1,4 @@
+
 /*
  * Sleeper is een superkleine sketch om de power van een Raspberry Pi af en aan te schakelen.
  * Raspberry Pi heeft zelf geen low power sleep mode, vandaar.
@@ -8,11 +9,14 @@
  
 const byte outputPin = 0;
 const byte inputPin  = 1;
+const int sleepperiods = 450; //ongeveer een uur, want 450*8=3600 seconden
+const int bootupTime = 30000; //het duurt ongeveer 27-28 seconden van power on tot indicator HIGH
+const int haltTime = 15000; //het duurt anywhere tussen 10.7 tot 12.5 seconden vanaf dat de indicator LOW gaat totdat de activity LED uitgaat
 
 volatile int watchdog_counter;
 
 // the setup function runs once when you press reset or power the board
-void setup() 
+void setup()
 {
   cancel_watchdog();
   // initialize digital pin 0 as an output and pin 1 as an input.
@@ -20,7 +24,7 @@ void setup()
   pinMode( inputPin, INPUT);
   //if the whole thing is just starting up after total power off, turn on the Pi
   digitalWrite(outputPin, HIGH);   // turn the PSU on
-  delay(1000);//give the Pi some time to boot up and set its output pins to HIGH
+  delay(bootupTime);//give the Pi some time to boot up
 
   //Get power consumption down as much as possible. Zie ook blz 36 van de datasheet van de ATTINY85
   watchdog_counter = 0;
@@ -32,35 +36,37 @@ void setup()
 }
 
 // the loop function runs over and over again forever
-void loop() 
+void loop()
 {
-    if (digitalRead(inputPin) != HIGH) 
+    if (digitalRead(inputPin) != HIGH)
     {
+      delay(haltTime); //de pi doet er best lang over om te gaan slapen :|
       digitalWrite(outputPin,  LOW);   // turn the PSU off
-      deepsleep();              // using the SLEEP_MODE_PWR_DOWN mode and watchdogs
+      deepsleep();              // using the SLEEP_MODE_PWR_DOWN mode en watchdogs
       digitalWrite(outputPin, HIGH);   // turn the PSU back on
+      delay(bootupTime); //give the pi some time to boot up
     }
-    delay(1000); //give the Pi some time to boot up and set its output pins to HIGH
+    delay(500); //sample elke halve seconde
 }
 
 //Zet de watchdog naar interrupt mode met een interval gegeven door het argument
 // 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms, 6=1000msec,7=2000ms, 8=4ms, 9=8s
 void setup_watchdog(int timerPrescaler) {
   cli();//disable all interrupts
-  if (timerPrescaler > 9 ) timerPrescaler = 9; //maximum value is 9
+  if (timerPrescaler > 9 ) timerPrescaler = 9; //Correct incoming amount if need be
 
-  byte bb = timerPrescaler & 7; 
+  byte bb = timerPrescaler & 7;
   if (timerPrescaler > 7) bb |= (1<<5); //Set the special 5th bit if necessary
 
   //This order of commands is important and cannot be combined
-  MCUSR &= ~(1<<WDRF); //Clear the watch dog reset (because WDE is always set if WDRF is set, and if WDE and WDIE are set then interrupt once and then reset)
+  MCUSR &= ~(1<<WDRF); //Clear the watch dog reset (want WDE is always set als WDRF is set, en als WDE en WDIE is set dan doe je een keer een interrupt en dan een reset)
   WDTCR |= (1<<WDCE) | (1<<WDE); //Set WD_change enable, set WD enable
   WDTCR = bb; //Set new watchdog timeout value
   WDTCR |= _BV(WDIE); //Set the interrupt enable, this will keep unit from resetting after each int (_BV(bit) is een macro voor 1<<bit, dit zet WDIE bit in WDTCR)
   sei();//enable interrupts again
 }
 
-//interrupt handler that handles the watchdog timer timeout triggering
+//interrupt handler voor als de watchdog timer timeout afgaat
 //de interrupt flag in WDTCR wordt automatisch gecleared als je de interrupt vector doet
 //de global interrupt enable wordt gecleared als je deze routine begint en weer gezet als de routine eindigt
 ISR(WDT_vect) {
@@ -71,7 +77,7 @@ ISR(WDT_vect) {
 void cancel_watchdog()
 {
   WDTCR |= (1<<WDCE) | (1<<WDE); //Set WD_change enable, set WD enable, nu heb je 4 clock cycles om wijzigingen aan WDTCR te doen.
-  WDTCR = 0;//sets all the bits to zero
+  WDTCR = 0;//zet gewoon alles uit?
 }
 
 void deepsleep()
@@ -82,17 +88,16 @@ void deepsleep()
   sleep_enable();
   //slaap een aantal keer;
     watchdog_counter = 0;//reset de watchdog counter voor de volgende keer
-    while(watchdog_counter < 2)//de ISR hoogt watchdog_counter elke 8 seconden met eentje op
+    while(watchdog_counter < sleepperiods)//de ISR hoogt watchdog_counter elke 8 seconden met eentje op
     {
       //sleep
       sleep_cpu();
       //na de sleep gaat het programma hier weer verder, als watchdog_counter nog niet hoog genoeg is
       //is deze loop dus super tight
     }
-    
+   
   //disable sleep
   sleep_disable();
-  //disable watchdog 
+  //disable watchdog
   cancel_watchdog();
 }
-
